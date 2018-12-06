@@ -1,0 +1,14 @@
+Manifest-Version: 1.0
+Bundle-ManifestVersion: 2
+Bundle-Name: Migrate Storage Provider
+Bundle-SymbolicName: org.kenos.idempiere.migratestorage
+Bundle-Version: 1.0.0
+Automatic-Module-Name: org.kenos.idempiere.migratestorage
+Bundle-RequiredExecutionEnvironment: JavaSE-1.8
+Require-Bundle: org.adempiere.base;bundle-version="4.1.0",
+ org.adempiere.plugin.utils;bundle-version="4.1.0"
+Service-Component: OSGI-INF/ProcessFactory.xml
+Bundle-ActivationPolicy: lazy
+Bundle-ClassPath: .
+Bundle-Activator: org.adempiere.plugin.utils.Incremental2PackActivator
+Bundle-Vendor: Kenos
