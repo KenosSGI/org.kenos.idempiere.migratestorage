@@ -5,9 +5,13 @@ import static org.compiere.model.X_AD_StorageProvider.METHOD_Database;
 import static org.compiere.model.X_AD_StorageProvider.METHOD_FileSystem;
 
 import java.io.File;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.List;
 
+import org.adempiere.exceptions.DBException;
 import org.adempiere.model.GenericPO;
 import org.compiere.model.ArchiveDB;
 import org.compiere.model.ArchiveFileSystem;
@@ -19,9 +23,9 @@ import org.compiere.model.MArchive;
 import org.compiere.model.MAttachment;
 import org.compiere.model.MStorageProvider;
 import org.compiere.model.PO;
-import org.compiere.model.Query;
 import org.compiere.process.ProcessInfoParameter;
 import org.compiere.process.SvrProcess;
+import org.compiere.util.DB;
 
 /**
  * 	Migrate Attachments from/to DB/File System
@@ -150,67 +154,105 @@ public class MigrateStorageProvider extends SvrProcess
 		
 		this.statusUpdate("Migrating attachments...");
 		
-		//	List all Attachments
-		List<MAttachment> attachments = new Query (getCtx(), MAttachment.Table_Name, "Title=? AND AD_Client_ID=?", null).setParameters(title, getAD_Client_ID()).list();
-		for (MAttachment attachment : attachments)
+		String sql = "SELECT AD_Table_ID, Record_ID FROM AD_Attachment WHERE Title=? AND AD_Client_ID=?";
+		PreparedStatement pstmt = null;
+		ResultSet rs = null;
+		try
 		{
-			//	Avoid those who are empty
-			if (attachment == null)
-				continue;
-			
-			//	Load from DB
-			asFrom.loadLOBData(attachment, spFrom);
-			
-			//	Avoid those who are empty
-			if (attachment.getEntries() == null
-					|| attachment.getEntries().length == 0)
-				continue;
+			pstmt = DB.prepareStatement(sql, null);
+			DB.setParameters(pstmt, new Object[]{title, getAD_Client_ID()});
+			rs = pstmt.executeQuery();
+			while(rs.next())
+			{
+				MAttachment attachment = MAttachment.get(getCtx(), rs.getInt(MAttachment.COLUMNNAME_AD_Table_ID), rs.getInt(MAttachment.COLUMNNAME_Record_ID));
+				
+				//	Avoid those who are empty
+				if (attachment == null)
+					continue;
+				
+				//	Load from DB
+				asFrom.loadLOBData(attachment, spFrom);
+				
+				//	Avoid those who are empty
+				if (attachment.getEntries() == null
+						|| attachment.getEntries().length == 0)
+					continue;
 
-			//	Create metadata
-			asTo.save(attachment, spTo);
-			
-			//	Save metadata using Generic PO to avoid problems with beforeSave overriding configs
-			PO po = new GenericPO(MAttachment.Table_Name, getCtx(), attachment.getAD_Attachment_ID(), attachment.get_TrxName());
-			po.set_ValueNoCheck(MAttachment.COLUMNNAME_Title, attachment.getTitle());
-			po.set_ValueNoCheck(MAttachment.COLUMNNAME_BinaryData, attachment.getBinaryData());
-			if (po.save())
-				countAttachments++;
-			
-			//	Status
-			if (countAttachments % 10 == 0)
-				this.statusUpdate(countAttachments + " attachments processed...");
+				//	Create metadata
+				asTo.save(attachment, spTo);
+				
+				//	Save metadata using Generic PO to avoid problems with beforeSave overriding configs
+				final PO po = new GenericPO(MAttachment.Table_Name, getCtx(), attachment.getAD_Attachment_ID(), attachment.get_TrxName());
+				po.set_ValueNoCheck(MAttachment.COLUMNNAME_Title, attachment.getTitle());
+				po.set_ValueNoCheck(MAttachment.COLUMNNAME_BinaryData, attachment.getBinaryData());
+				if (po.save())
+					countAttachments++;
+				
+				//	Status
+				if (countAttachments % 150 == 0)
+					this.statusUpdate(countAttachments + " attachments processed...");
+			}
+		}
+		catch (SQLException e)
+		{
+			throw new DBException(e, sql);
+		}
+		finally
+		{
+			DB.close(rs, pstmt);
+			rs = null; pstmt = null;
 		}
 		
 		this.statusUpdate("Migrating archives...");
 		
-		//	List all Archives
-		List<MArchive> archives = new Query (getCtx(), MArchive.Table_Name, "AD_Client_ID=?", null).setParameters(getAD_Client_ID()).list();
-		for (MArchive archive : archives)
+		sql = "SELECT AD_Table_ID, Record_ID FROM AD_Archive WHERE AD_Client_ID=?";
+		try
 		{
-			//	Avoid those who are empty
-			if (archive == null)
-				continue;
-			
-			//	Load from DB
-			byte[] data = arsFrom.loadLOBData(archive, spFrom);
-			if (data == null)
-				continue;
-			
-			//	Create metadata
-			arsTo.save(archive, spTo, data);
-			
-			//	Save metadata using Generic PO to avoid problems with beforeSave overriding configs
-			PO po = new GenericPO(MArchive.Table_Name, getCtx(), archive.getAD_Archive_ID(), archive.get_TrxName());
-			po.set_ValueNoCheck(MArchive.COLUMNNAME_BinaryData, archive.getByteData());
-			if (po.save())
-				countArchives++;
-			
-			//	Status
-			if (countArchives % 10 == 0)
-				this.statusUpdate(countAttachments + " archives processed...");
+			pstmt = DB.prepareStatement(sql, null);
+			DB.setParameters(pstmt, new Object[]{getAD_Client_ID()});
+			rs = pstmt.executeQuery();
+			while(rs.next())
+			{
+				MArchive[] archives = MArchive.get(getCtx(), " AND " + MArchive.COLUMNNAME_AD_Table_ID + "=" + rs.getInt(MArchive.COLUMNNAME_AD_Table_ID) + " AND " + MArchive.COLUMNNAME_Record_ID + "=" +  rs.getInt(MArchive.COLUMNNAME_Record_ID));
+				if (archives == null || archives.length != 1)
+					continue;
+				
+				MArchive archive = archives[0];
+				
+				//	Avoid those who are empty
+				if (archive == null)
+					continue;
+				
+				//	Load from DB
+				final byte[] data = arsFrom.loadLOBData(archive, spFrom);
+				if (data == null)
+					continue;
+				
+				//	Create metadata
+				arsTo.save(archive, spTo, data);
+				
+				//	Save metadata using Generic PO to avoid problems with beforeSave overriding configs
+				final PO po = new GenericPO(MArchive.Table_Name, getCtx(), archive.getAD_Archive_ID(), archive.get_TrxName());
+				po.set_ValueNoCheck(MArchive.COLUMNNAME_BinaryData, archive.getByteData());
+				if (po.save())
+					countArchives++;
+				
+				//	Status
+				if (countArchives % 10 == 0)
+					this.statusUpdate(countArchives + " archives processed...");
+			}
+		}
+		catch (SQLException e)
+		{
+			throw new DBException(e, sql);
+		}
+		finally
+		{
+			DB.close(rs, pstmt);
+			rs = null; pstmt = null;
 		}
 		
-		this.statusUpdate(countAttachments + "Done...");
+		this.statusUpdate("Done...");
 		
 		this.addLog(countAttachments + " attachment(s) migrated from " + p_Method + " to " + p_MethodTo);
 		this.addLog(countArchives + " archive(s) migrated from " + p_Method + " to " + p_MethodTo);
